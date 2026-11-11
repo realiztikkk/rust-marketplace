@@ -1,0 +1,17 @@
+# OVH deploy overlay — adds a Caddy reverse proxy with automatic HTTPS.
+# Used with: docker compose -f docker-compose.yml -f docker-compose.ovh.yml up -d --build
+# The home-machine deploy (Nginx Proxy Manager) does not use this file.
+services:
+  caddy:
+    image: caddy:2
+    container_name: marketplace-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+    depends_on:
+      - rust-marketplace

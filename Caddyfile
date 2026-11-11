@@ -1,0 +1,9 @@
+# Caddy reverse proxy for the OVH deploy.
+# Automatic HTTPS (Let's Encrypt) for plugins.therustingdead.com.
+# Used with: docker compose -f docker-compose.yml -f docker-compose.ovh.yml up -d --build
+# DNS must point plugins.therustingdead.com at this box BEFORE the first
+# run, or Caddy cannot get its certificate.
+
+plugins.therustingdead.com {
+    reverse_proxy rust-marketplace:8000
+}

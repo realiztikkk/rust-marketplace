@@ -1,8 +1,10 @@
-# Deploy — The Rusting Dead Mod Marketplace
+# Deploy — The Rusting Dead Mod Marketplace (OVH)
 
 How to get the marketplace live on `plugins.therustingdead.com` so we can
-test and improve it iteratively. One container, one volume, behind the
-Nginx Proxy Manager you already run.
+test and improve it iteratively. Target: the OVH game-server box
+(`51.222.245.218`, user `rustserver`, Ubuntu 22.04.5) — the box that runs
+The Rusting Dead server. The home machine (`zmedia`) is NOT the deploy
+target and needs no access for this.
 
 ## What is already ready
 
@@ -11,37 +13,53 @@ Nginx Proxy Manager you already run.
 - `docker-compose.yml` — one service, port `8000`, volume `./data:/data`
   (SQLite DB + uploaded plugin files). All state lives in `./data`;
   back that folder up and you have everything.
+- `docker-compose.ovh.yml` + `Caddyfile` — adds a Caddy reverse proxy
+  with automatic HTTPS for `plugins.therustingdead.com`.
 - `.env.example` — every setting, with PayPal sandbox first.
 - `PAYPAL-SETUP.md` — the PayPal sandbox walkthrough (separate step,
   after the site is up).
 - `POLICY-DRAFT.md` — review / refund / chargeback policies drafted
   from RogueDepot (still to be adopted as written).
+- Code is in GitHub: `realiztikkk/rust-marketplace` (private, main).
+  Every change goes through that repo — pulls included.
 
-## Step 0 — Get the code onto the host (the one gap)
+## Access needed (one time)
 
-The code currently lives only in Muse's workspace, not in a GitHub repo
-yet. Pick one:
+1. **SSH key** — my public key goes in `rustserver`'s
+   `~/.ssh/authorized_keys` on the OVH box (my own key, not Eugene's):
+   `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEIZ9FfcwKFuKYuFtJN4bXIBwvnvxeZsJWg7qtqxF+lL hatch`
+2. **How I reach the box** — outbound SSH from this VM is off, so I
+   reach it through the Tailscale tunnel proxy *if the OVH box is on
+   your Tailscale network*. If it is not, the box needs to join the
+   tailnet (or outbound SSH needs enabling). The home-machine Tailscale
+   approval is NOT needed for this deploy.
+3. **Docker on the box** — install status unknown; check with
+   `docker --version`. If it is not installed, install Docker Engine
+   + the Compose plugin and add `rustserver` to the `docker` group.
 
-**A. GitHub repo (recommended for iterating).** I create a repo
-(e.g. `realiztikkk/rust-marketplace`), push the code, and every update
-is `git pull` + rebuild on the host. Needs your approval to create the
-repo and push.
+## Step 1 — DNS (Dynu)
 
-**B. Copy the folder yourself.** Zip / `rsync` this folder to the host
-over SSH/Tailscale and skip GitHub for now. Works, but every update is
-another manual copy.
+Add an `A` record in Dynu (a specific record beats the wildcard):
 
-**C. I deploy it directly.** Set up my own Tailscale access to your
-home machine (separate from Eugene's access) and I run the deploy
-commands on the host for you.
+- Host: `plugins`
+- Domain: `therustingdead.com`
+- Value: `51.222.245.218`
 
-## Step 1 — On the host
+Do this BEFORE the first Caddy run, or Caddy cannot get its
+certificate.
+
+## Step 2 — On the OVH box
 
 ```bash
-# Suggested home, next to your other sites in /opt/mysites
-cd /opt/mysites
+# Next to the game server data
+cd /data1
 git clone https://github.com/realiztikkk/rust-marketplace.git marketplace
 cd marketplace
+
+# Brand images travel separately (the GitHub connector cannot push
+# binary files): copy brand/ from the workspace to the box, e.g.
+#   scp -r brand/ rustserver@51.222.245.218:/data1/marketplace/brand/
+# (or any other copy method — the Dockerfile COPYs brand/ at build time)
 
 # Secrets — do this once, never commit .env
 cp .env.example .env
@@ -54,39 +72,18 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 # checkout shows "payments are not configured yet" until sandbox keys
 # are added (see PAYPAL-SETUP.md).
 
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.ovh.yml up -d --build
 curl -s http://127.0.0.1:8000/health
-docker compose logs -f rust-marketplace   # Ctrl-C to exit logs
+docker compose -f docker-compose.yml -f docker-compose.ovh.yml logs -f rust-marketplace   # Ctrl-C to exit logs
 ```
 
-Expected: `/health` returns ok, home page loads at
-`http://<host>:8000`. Port 8000 is only for the LAN — do **not**
-forward it on the router; the public entry is NPM (Step 3).
+Expected: `/health` returns ok, and `https://plugins.therustingdead.com`
+serves the marketplace with your logo and horde banner once DNS has
+propagated and Caddy has its certificate (a minute or two on first run).
+Ports 80/443 on the box are Caddy's; nothing else needs to be exposed.
+The marketplace itself only listens on 8000 inside the Compose network.
 
-## Step 2 — DNS (Dynu)
-
-Add an `A` record in Dynu:
-
-- Host: `plugins`
-- Domain: `therustingdead.com`
-- Value: your public IP (same one your other sites use)
-
-If your public IP changes, Dynu's dynamic-DNS updater keeps it
-pointed at the host.
-
-## Step 3 — Nginx Proxy Manager
-
-Add a proxy host:
-
-- Domain: `plugins.therustingdead.com`
-- Scheme: `http`, Forward Hostname/IP: `192.168.1.103`, Forward Port: `8000`
-- SSL: request a Let's Encrypt certificate, Force SSL on
-- Websockets Support: on (harmless now, needed if live features land later)
-
-Then open `https://plugins.therustingdead.com` — you should see the
-marketplace with your logo and horde banner.
-
-## Step 4 — First sign-in + smoke test
+## Step 3 — First sign-in + smoke test
 
 1. Register as `Realiztik` — the **first account is the admin**.
 2. Home, Browse, a listing page, Forum, Feed, Services all load.
@@ -96,14 +93,14 @@ marketplace with your logo and horde banner.
 5. Check the logo/banner load and the hero (banner title under the
    headline) and the two-line wordmark.
 
-## Step 5 — Iterate (the loop from here on)
+## Step 4 — Iterate (the loop from here on)
 
 Every change follows the same loop:
 
 ```bash
-cd /opt/mysites/marketplace
-git pull            # or re-copy the folder, if you went with option B
-docker compose up -d --build
+cd /data1/marketplace
+git pull
+docker compose -f docker-compose.yml -f docker-compose.ovh.yml up -d --build
 curl -s http://127.0.0.1:8000/health
 ```
 
