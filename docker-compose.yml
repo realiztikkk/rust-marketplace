@@ -1,0 +1,21 @@
+# Rust plugin marketplace — Docker Compose
+# One service, one volume. All state (SQLite DB + uploaded plugin files)
+# lives in ./data on the host. Back that folder up and you have everything.
+#
+# Nginx Proxy Manager: add a proxy host for your Dynu domain pointing at
+# this host, port 8000 (e.g. http://192.168.1.103:8000), with "Websockets
+# Support" on if you later add live features. No other ports are exposed.
+services:
+  rust-marketplace:
+    build: .
+    container_name: rust-marketplace
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    env_file:
+      - path: .env
+        required: false # .env is optional; APP_SECRET_KEY falls back to a dev default — set a real one (see README)
+    environment:
+      - DATA_DIR=/data
